@@ -29,6 +29,12 @@ are set, the app also nudges Jellyfin's scanner after each download.
 - **Remux, never re-encode** — video+audio are merged with `-c copy`.
 - One automatic retry per job (transient YouTube 403s), then a manual retry
   button.
+- **Per-download quality and subtitles** — the UI's quality picker
+  (480p…4K) sets a per-job height cap, and selected subtitle languages
+  (with optional auto-caption fallback) land as `<basename>.<lang>.srt`
+  sidecars, which Jellyfin picks up as external subtitle tracks. The API
+  takes them as `quality`, `subs` ("tr,en"), `auto_subs` on
+  `POST /api/download`.
 
 ## Run
 

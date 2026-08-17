@@ -80,8 +80,16 @@ def init_db():
             title TEXT, channel TEXT, duration INTEGER,
             status TEXT NOT NULL DEFAULT 'queued',
             error TEXT, file TEXT,
-            added TEXT, finished TEXT, attempts INTEGER DEFAULT 0)""")
+            added TEXT, finished TEXT, attempts INTEGER DEFAULT 0,
+            quality INTEGER, subs TEXT, auto_subs INTEGER DEFAULT 0)""")
         con.execute("PRAGMA journal_mode=WAL")
+        # v1 rows predate the quality/subtitle columns
+        cols = {r[1] for r in con.execute("PRAGMA table_info(jobs)")}
+        for name, ddl in (("quality", "quality INTEGER"),
+                          ("subs", "subs TEXT"),
+                          ("auto_subs", "auto_subs INTEGER DEFAULT 0")):
+            if name not in cols:
+                con.execute(f"ALTER TABLE jobs ADD COLUMN {ddl}")
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
@@ -134,12 +142,34 @@ def find_existing(video_id: str) -> Path | None:
     return None
 
 
-def format_string() -> str:
+def format_string(max_height: int = 0) -> str:
     # avc1 (h264) preferred: the target box (Pi-class Jellyfin) direct-plays
     # it; vp9/av1 would force transcoding. Merging is a remux, no re-encode.
-    h = MAX_HEIGHT
+    # A per-job height (from the UI's quality picker) overrides the default;
+    # above 1080p there is usually no avc1, so the fallback chain kicks in.
+    h = max_height or MAX_HEIGHT
     return (f"bestvideo[height<={h}][vcodec^=avc1]+bestaudio[ext=m4a]/"
             f"bestvideo[height<={h}]+bestaudio/best[height<={h}]/best")
+
+
+SUB_LANG_RE = re.compile(r"^[a-zA-Z]{2,3}(-[a-zA-Z]{2,8})?$")
+
+
+def clean_sub_langs(subs: str) -> str:
+    """Sanitize a comma-separated language list from the client."""
+    langs = []
+    for lang in (subs or "").split(","):
+        lang = lang.strip().lower()
+        if lang and SUB_LANG_RE.match(lang) and lang not in langs:
+            langs.append(lang)
+    return ",".join(langs[:5])
+
+
+def clean_quality(quality: int) -> int:
+    """0 = server default; otherwise clamp to something yt-dlp understands."""
+    if not quality:
+        return 0
+    return max(144, min(int(quality), 2160))
 
 
 def watch_url(video_id: str) -> str:
@@ -223,7 +253,8 @@ def thumb(v: str):
 
 
 # ── API: queueing ───────────────────────────────────────────────────────────
-def enqueue_entries(entries: list) -> dict:
+def enqueue_entries(entries: list, quality: int = 0, subs: str = "",
+                    auto_subs: bool = False) -> dict:
     """Queue flat entries; skip files already on disk and ids already
     waiting in the queue."""
     added, skipped = 0, 0
@@ -238,12 +269,13 @@ def enqueue_entries(entries: list) -> dict:
                 skipped += 1
                 continue
             con.execute(
-                "INSERT INTO jobs (video_id, title, channel, duration, added)"
-                " VALUES (?,?,?,?,?)",
+                "INSERT INTO jobs (video_id, title, channel, duration, added,"
+                " quality, subs, auto_subs) VALUES (?,?,?,?,?,?,?,?)",
                 (vid, e.get("title") or "?",
                  e.get("channel") or e.get("uploader") or "",
                  int(e.get("duration") or 0),
-                 datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                 quality, subs, int(auto_subs)))
             pending.add(vid)
             added += 1
     return {"added": added, "skipped": skipped}
@@ -252,10 +284,16 @@ def enqueue_entries(entries: list) -> dict:
 class DownloadRequest(BaseModel):
     video_id: str = ""   # from search results
     url: str = ""        # pasted URL (video, playlist or channel)
+    quality: int = 0     # max height (720, 1080, ...); 0 = server default
+    subs: str = ""       # comma-separated languages ("tr,en"); "" = none
+    auto_subs: bool = False  # fall back to YouTube's auto captions
 
 
 @app.post("/api/download")
 def download(req: DownloadRequest):
+    quality = clean_quality(req.quality)
+    subs = clean_sub_langs(req.subs)
+    auto_subs = bool(req.auto_subs and subs)
     if req.video_id:
         if not VIDEO_ID_RE.match(req.video_id):
             raise HTTPException(400, "not a video id")
@@ -272,16 +310,18 @@ def download(req: DownloadRequest):
                 return {"status": "exists",
                         "file": str(existing.relative_to(VIDEO_DIR))}
             cur = con.execute(
-                "INSERT INTO jobs (video_id, added) VALUES (?,?)",
+                "INSERT INTO jobs (video_id, added, quality, subs, auto_subs)"
+                " VALUES (?,?,?,?,?)",
                 (req.video_id,
-                 datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                 quality, subs, int(auto_subs)))
             return {"job_id": cur.lastrowid, "status": "queued"}
 
     url = (req.url or "").strip()
     if not url.lower().startswith(("http://", "https://")):
         raise HTTPException(400, "paste a YouTube link or send a video_id")
     info = resolve_url(url)
-    result = enqueue_entries(info["entries"])
+    result = enqueue_entries(info["entries"], quality, subs, auto_subs)
     result["kind"] = info["kind"]
     if info["kind"] == "playlist":
         result["playlist"] = info.get("title", "")
@@ -350,9 +390,9 @@ def _download_one(job: dict):
     shutil.rmtree(tmp, ignore_errors=True)
     tmp.mkdir(parents=True)
     try:
-        with YoutubeDL({
+        opts = {
             **_ydl_base_opts(),
-            "format": format_string(),
+            "format": format_string(int(job.get("quality") or 0)),
             "outtmpl": str(tmp / "%(id)s.%(ext)s"),
             "merge_output_format": "mp4",
             "noplaylist": True, "retries": 5,
@@ -363,7 +403,22 @@ def _download_one(job: dict):
                 {"key": "FFmpegThumbnailsConvertor", "format": "jpg"},
                 {"key": "EmbedThumbnail", "already_have_thumbnail": True},
             ],
-        }) as y:
+        }
+        subs = clean_sub_langs(job.get("subs") or "")
+        if subs:
+            # "en" should also catch "en-US"-style variants
+            langs = []
+            for lang in subs.split(","):
+                langs += [lang, lang + ".*"]
+            opts.update({
+                "writesubtitles": True,
+                "subtitleslangs": langs,
+                "writeautomaticsub": bool(job.get("auto_subs")),
+            })
+            opts["postprocessors"] = ([{"key": "FFmpegSubtitlesConvertor",
+                                        "format": "srt"}]
+                                      + opts["postprocessors"])
+        with YoutubeDL(opts) as y:
             info = y.extract_info(watch_url(vid), download=True)
 
         files = list(tmp.glob("*.mp4"))
@@ -383,6 +438,13 @@ def _download_one(job: dict):
         if thumbs:
             shutil.move(str(thumbs[0]),
                         str(target.with_name(target.stem + "-thumb.jpg")))
+        # subtitles: "<id>.<lang>.srt" -> "<video basename>.<lang>.srt",
+        # which Jellyfin picks up as an external subtitle track
+        for sub in tmp.glob("*.srt"):
+            parts = sub.name.split(".")
+            lang = parts[-2].lower() if len(parts) >= 3 else "und"
+            shutil.move(str(sub),
+                        str(target.with_name(f"{target.stem}.{lang}.srt")))
         # keep the row's metadata fresh (queue rows from pasted single URLs
         # start out title-less)
         with db() as con:

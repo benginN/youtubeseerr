@@ -16,6 +16,10 @@
   .search input:focus { outline: none; border-color: var(--accent); }
   .search button { padding: 0.65rem 1.1rem; border-radius: 8px; border: none; background: var(--accent); color: #16161e; font-weight: 600; cursor: pointer; }
   .hint { color: var(--dim); font-size: 0.82rem; margin-bottom: 1.1rem; }
+  .opts { display: flex; align-items: center; flex-wrap: wrap; gap: 0.35rem 0.7rem; font-size: 0.85rem; color: var(--dim); margin-bottom: 0.4rem; }
+  .opts select { background: var(--box); color: var(--fg); border: 1px solid #3a3c4a; border-radius: 6px; padding: 0.15rem 0.3rem; font-size: 0.85rem; }
+  .opts label { display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer; }
+  .opts .sep { border-left: 1px solid #3a3c4a; height: 1rem; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); gap: 0.8rem; }
   .card { background: var(--box); border-radius: 10px; overflow: hidden; }
   .card .thumbwrap { position: relative; aspect-ratio: 16/9; background: #16161e; }
@@ -46,7 +50,23 @@
     <input id="searchBox" type="search" placeholder="YouTube'da ara… ya da video/oynatma listesi bağlantısı yapıştır" autofocus>
     <button type="submit">Ara / İndir</button>
   </form>
-  <div class="hint">Bağlantı yapıştırırsan doğrudan indirme kuyruğuna girer (oynatma listeleri de olur); yazı yazarsan YouTube'da arar.</div>
+  <div class="opts" id="opts">
+    <label>Kalite
+      <select id="quality">
+        <option value="480">480p</option>
+        <option value="720">720p</option>
+        <option value="1080" selected>1080p</option>
+        <option value="2160">En iyi (4K'ya kadar)</option>
+      </select>
+    </label>
+    <span class="sep"></span>
+    <span>Altyazı:</span>
+    <label><input type="checkbox" class="sub" value="tr" checked> TR</label>
+    <label><input type="checkbox" class="sub" value="en" checked> EN</label>
+    <label><input type="checkbox" class="sub" value="de"> DE</label>
+    <label title="Elle hazırlanmış altyazı yoksa YouTube'un otomatik altyazısı da kabul edilir"><input type="checkbox" id="autoSubs" checked> otomatik de olur</label>
+  </div>
+  <div class="hint">Bağlantı yapıştırırsan doğrudan indirme kuyruğuna girer (oynatma listeleri de olur); yazı yazarsan YouTube'da arar. 1080p üstünde h264 genelde yok — Pi oynatırken zorlanabilir. Altyazılar videonun yanına <code>.tr.srt</code> gibi iner, Jellyfin kendiliğinden görür.</div>
   <div id="results"><div class="note">Aramak için yukarıya yaz; sonuçlar burada çıkar.</div></div>
   <h2>Kuyruk &amp; son indirilenler</h2>
   <div class="queue" id="queue"><div class="note">—</div></div>
@@ -72,6 +92,25 @@ function toast(m) {
   clearTimeout(toastEl._t); toastEl._t = setTimeout(() => toastEl.style.display = "none", 7000);
 }
 
+// ── quality & subtitle settings (remembered in localStorage) ──
+const qualityEl = document.getElementById("quality");
+const autoSubsEl = document.getElementById("autoSubs");
+function loadOpts() {
+  try {
+    const s = JSON.parse(localStorage.getItem("yts-opts") || "{}");
+    if (s.quality) qualityEl.value = String(s.quality);
+    if (Array.isArray(s.subs)) document.querySelectorAll(".sub").forEach(c => c.checked = s.subs.includes(c.value));
+    if (typeof s.auto === "boolean") autoSubsEl.checked = s.auto;
+  } catch {}
+}
+function dlOpts() {
+  const subs = [...document.querySelectorAll(".sub:checked")].map(c => c.value);
+  const o = { quality: Number(qualityEl.value), subs, auto: autoSubsEl.checked };
+  localStorage.setItem("yts-opts", JSON.stringify(o));
+  return { quality: o.quality, subs: subs.join(","), auto_subs: o.auto };
+}
+loadOpts();
+
 function drawVideos(el, results) {
   if (!results.length) { el.innerHTML = '<div class="note">Sonuç yok.</div>'; return; }
   el.innerHTML = '<div class="grid">' + results.map(v => `
@@ -94,7 +133,7 @@ async function downloadOne(btn) {
   btn.disabled = true; btn.textContent = "⏳";
   try {
     const r = await fetch("/api/download", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ video_id: btn.dataset.id }) });
+      body: JSON.stringify({ video_id: btn.dataset.id, ...dlOpts() }) });
     if (!r.ok) throw 0;
     const d = await r.json();
     if (d.status === "exists") { btn.textContent = "✔"; return; }
@@ -118,7 +157,7 @@ async function downloadUrl(url) {
   resultsEl.innerHTML = '<div class="note">⏳ bağlantı çözülüyor… (oynatma listelerinde biraz sürebilir)</div>';
   try {
     const r = await fetch("/api/download", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }) });
+      body: JSON.stringify({ url, ...dlOpts() }) });
     if (!r.ok) throw new Error((await r.json()).detail || "bağlantı çözülemedi");
     const d = await r.json();
     if (d.status === "exists") { toast("✔ Bu video zaten indirilmiş."); resultsEl.innerHTML = ""; }

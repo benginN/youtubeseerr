@@ -72,6 +72,14 @@ p.unlink()
 fs = main.format_string()
 ok("vcodec^=avc1" in fs and "height<=1080" in fs, "format prefers h264 and caps height")
 ok(fs.count("/") == 3, "format has fallback chain")
+ok("height<=720" in main.format_string(720), "per-job quality overrides the cap")
+ok("height<=1080" in main.format_string(0), "quality 0 falls back to server default")
+
+ok(main.clean_quality(0) == 0 and main.clean_quality(720) == 720, "clean_quality passthrough")
+ok(main.clean_quality(99) == 144 and main.clean_quality(5000) == 2160, "clean_quality clamps")
+ok(main.clean_sub_langs(" TR,en, tr,bogus!,en-US ,fr,it,pt") == "tr,en,en-us,fr,it",
+   "sub langs sanitized, deduped, capped at 5")
+ok(main.clean_sub_langs("") == "", "empty subs stay empty")
 
 ok(main.VIDEO_ID_RE.match("dQw4w9WgXcQ"), "video id regex accepts a real id")
 ok(not main.VIDEO_ID_RE.match("../etc/pass"), "video id regex rejects traversal")
@@ -180,5 +188,66 @@ with main.db() as con:
 ok(row2["duration"] == 42, "row metadata refreshed from download info")
 status2, _ = main._download_one(row)
 ok(status2 == "exists", "re-download detects the file on disk")
+
+# ── quality & subtitles ─────────────────────────────────────────────────────
+r = client.post("/api/download", json={"video_id": "GGGGGGGGGGG", "quality": 720,
+                                       "subs": "tr,en", "auto_subs": True}).json()
+with main.db() as con:
+    row_g = dict(con.execute("SELECT * FROM jobs WHERE id=?", (r["job_id"],)).fetchone())
+ok(row_g["quality"] == 720 and row_g["subs"] == "tr,en" and row_g["auto_subs"] == 1,
+   "quality/subs/auto stored on the job")
+r = client.post("/api/download", json={"video_id": "HHHHHHHHHHH", "auto_subs": True}).json()
+with main.db() as con:
+    row_h = dict(con.execute("SELECT * FROM jobs WHERE id=?", (r["job_id"],)).fetchone())
+ok(row_h["auto_subs"] == 0, "auto_subs without languages is dropped")
+
+FAKE_RESULTS["https://www.youtube.com/playlist?list=PL2"] = {
+    "title": "Liste2", "entries": [{"id": "IIIIIIIIIII", "title": "x"}]}
+client.post("/api/download", json={"url": "https://www.youtube.com/playlist?list=PL2",
+                                   "quality": 480, "subs": "de"})
+with main.db() as con:
+    row_i = dict(con.execute("SELECT * FROM jobs WHERE video_id='IIIIIIIIIII'").fetchone())
+ok(row_i["quality"] == 480 and row_i["subs"] == "de", "playlist entries inherit quality/subs")
+
+
+class SubbedYDL(DownloadingYDL):
+    last_opts = None
+
+    def extract_info(self, url, download=False):
+        SubbedYDL.last_opts = self.opts
+        info = FakeYDL.extract_info(self, url, download)
+        if download:
+            tmp = Path(self.opts["outtmpl"]).parent
+            (tmp / (info["id"] + ".mp4")).write_bytes(b"fake video")
+            (tmp / (info["id"] + ".jpg")).write_bytes(b"fake thumb")
+            if self.opts.get("writesubtitles"):
+                for lang in ("tr", "en"):
+                    (tmp / f"{info['id']}.{lang}.srt").write_text("1\n00:00:00,0 --> 00:00:01,0\nx\n")
+        return info
+
+
+fake.YoutubeDL = SubbedYDL
+FAKE_RESULTS["https://www.youtube.com/watch?v=GGGGGGGGGGG"] = {
+    "id": "GGGGGGGGGGG", "title": "Altyazılı", "channel": "K4", "duration": 5}
+status3, file3 = main._download_one(row_g)
+ok(status3 == "done", "subtitled download completes")
+o = SubbedYDL.last_opts
+ok("height<=720" in o["format"], "worker uses the job's quality")
+ok(o.get("writesubtitles") is True and o.get("writeautomaticsub") is True,
+   "worker requests subtitles + auto fallback")
+ok("tr" in o["subtitleslangs"] and "en.*" in o["subtitleslangs"],
+   "language wildcards cover regional variants")
+ok(any(pp.get("key") == "FFmpegSubtitlesConvertor" for pp in o["postprocessors"]),
+   "subtitles converted to srt")
+t3 = main.VIDEO_DIR / "K4" / "Altyazılı.mp4"
+ok(t3.exists(), "subtitled video landed")
+ok((main.VIDEO_DIR / "K4" / "Altyazılı.tr.srt").exists()
+   and (main.VIDEO_DIR / "K4" / "Altyazılı.en.srt").exists(),
+   "srt sidecars renamed to <basename>.<lang>.srt")
+o2_row = dict(row_h)
+FAKE_RESULTS["https://www.youtube.com/watch?v=HHHHHHHHHHH"] = {
+    "id": "HHHHHHHHHHH", "title": "Sade", "channel": "K4"}
+main._download_one(o2_row)
+ok(not SubbedYDL.last_opts.get("writesubtitles"), "no-subs job requests no subtitles")
 
 print(f"OK — {PASS} assertions passed")

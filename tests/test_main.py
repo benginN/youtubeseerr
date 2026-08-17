@@ -164,7 +164,7 @@ ok(client.get("/api/thumb", params={"v": "../../etc"}).status_code == 400, "thum
 class DownloadingYDL(FakeYDL):
     def extract_info(self, url, download=False):
         info = super().extract_info(url, download)
-        if download:
+        if download and not self.opts.get("skip_download"):
             tmp = Path(self.opts["outtmpl"]).parent
             (tmp / (info["id"] + ".mp4")).write_bytes(b"fake video")
             (tmp / (info["id"] + ".jpg")).write_bytes(b"fake thumb")
@@ -176,8 +176,8 @@ FAKE_RESULTS["https://www.youtube.com/watch?v=EEEEEEEEEEE"] = {
     "id": "EEEEEEEEEEE", "title": "Taze: Bölüm 1/2", "channel": "K3", "duration": 42}
 with main.db() as con:
     row = dict(con.execute("SELECT * FROM jobs WHERE video_id='EEEEEEEEEEE'").fetchone())
-status, file = main._download_one(row)
-ok(status == "done", "worker download completes")
+status, file, note = main._download_one(row)
+ok(status == "done" and note == "", "worker download completes without a note")
 target = main.VIDEO_DIR / "K3" / "Taze- Bölüm 1-2.mp4"
 ok(target.exists(), "video landed in <channel>/<title>.mp4")
 ok(target.with_name(target.stem + "-thumb.jpg").exists(), "sidecar -thumb.jpg written")
@@ -186,7 +186,7 @@ with main.db() as con:
     con.execute("UPDATE jobs SET status='done', file=? WHERE video_id='EEEEEEEEEEE'", (file,))
     row2 = dict(con.execute("SELECT * FROM jobs WHERE video_id='EEEEEEEEEEE'").fetchone())
 ok(row2["duration"] == 42, "row metadata refreshed from download info")
-status2, _ = main._download_one(row)
+status2, _, _ = main._download_one(row)
 ok(status2 == "exists", "re-download detects the file on disk")
 
 # ── quality & subtitles ─────────────────────────────────────────────────────
@@ -211,44 +211,72 @@ ok(row_i["quality"] == 480 and row_i["subs"] == "de", "playlist entries inherit 
 
 
 class SubbedYDL(DownloadingYDL):
-    last_opts = None
+    last_opts = None      # opts of the main (video) pass
+    last_sub_opts = None  # opts of the separate subtitle pass
+    fail_subs = False     # simulate a 429 on the caption endpoints
 
     def extract_info(self, url, download=False):
-        SubbedYDL.last_opts = self.opts
         info = FakeYDL.extract_info(self, url, download)
-        if download:
-            tmp = Path(self.opts["outtmpl"]).parent
-            (tmp / (info["id"] + ".mp4")).write_bytes(b"fake video")
-            (tmp / (info["id"] + ".jpg")).write_bytes(b"fake thumb")
+        if not download:
+            return info
+        tmp = Path(self.opts["outtmpl"]).parent
+        if self.opts.get("skip_download"):
+            SubbedYDL.last_sub_opts = self.opts
+            if SubbedYDL.fail_subs:
+                raise RuntimeError("HTTP Error 429: Too Many Requests")
             if self.opts.get("writesubtitles"):
                 for lang in ("tr", "en"):
                     (tmp / f"{info['id']}.{lang}.srt").write_text("1\n00:00:00,0 --> 00:00:01,0\nx\n")
+        else:
+            SubbedYDL.last_opts = self.opts
+            (tmp / (info["id"] + ".mp4")).write_bytes(b"fake video")
+            (tmp / (info["id"] + ".jpg")).write_bytes(b"fake thumb")
         return info
 
 
 fake.YoutubeDL = SubbedYDL
 FAKE_RESULTS["https://www.youtube.com/watch?v=GGGGGGGGGGG"] = {
     "id": "GGGGGGGGGGG", "title": "Altyazılı", "channel": "K4", "duration": 5}
-status3, file3 = main._download_one(row_g)
-ok(status3 == "done", "subtitled download completes")
+status3, file3, note3 = main._download_one(row_g)
+ok(status3 == "done" and note3 == "", "subtitled download completes")
 o = SubbedYDL.last_opts
 ok("height<=720" in o["format"], "worker uses the job's quality")
-ok(o.get("writesubtitles") is True and o.get("writeautomaticsub") is True,
-   "worker requests subtitles + auto fallback")
-ok("tr" in o["subtitleslangs"] and "en.*" in o["subtitleslangs"],
+ok(not o.get("writesubtitles"), "main video pass carries no subtitle options")
+so = SubbedYDL.last_sub_opts
+ok(so.get("skip_download") is True and so.get("writesubtitles") is True
+   and so.get("writeautomaticsub") is True,
+   "separate subtitle pass requests subs + auto fallback, no re-download")
+ok("tr" in so["subtitleslangs"] and "en.*" in so["subtitleslangs"],
    "language wildcards cover regional variants")
-ok(any(pp.get("key") == "FFmpegSubtitlesConvertor" for pp in o["postprocessors"]),
+ok(so.get("sleep_interval_subtitles"), "subtitle pass sleeps between caption requests")
+ok(any(pp.get("key") == "FFmpegSubtitlesConvertor" for pp in so["postprocessors"]),
    "subtitles converted to srt")
 t3 = main.VIDEO_DIR / "K4" / "Altyazılı.mp4"
 ok(t3.exists(), "subtitled video landed")
 ok((main.VIDEO_DIR / "K4" / "Altyazılı.tr.srt").exists()
    and (main.VIDEO_DIR / "K4" / "Altyazılı.en.srt").exists(),
    "srt sidecars renamed to <basename>.<lang>.srt")
+
+# a caption-endpoint 429 must NOT sink the video (2026-08-17 live incident)
+SubbedYDL.fail_subs = True
+FAKE_RESULTS["https://www.youtube.com/watch?v=KKKKKKKKKKK"] = {
+    "id": "KKKKKKKKKKK", "title": "İnatçı", "channel": "K4"}
+with main.db() as con:
+    cur = con.execute("INSERT INTO jobs (video_id, status, added, subs, auto_subs)"
+                      " VALUES ('KKKKKKKKKKK', 'queued', '2026-08-17', 'tr,en', 1)")
+    row_k = dict(con.execute("SELECT * FROM jobs WHERE id=?", (cur.lastrowid,)).fetchone())
+status4, file4, note4 = main._download_one(row_k)
+ok(status4 == "done", "subtitle failure does not sink the download")
+ok("altyazı inemedi" in note4 and "429" in note4, "subtitle failure leaves a note")
+ok((main.VIDEO_DIR / "K4" / "İnatçı.mp4").exists(), "video still landed despite sub failure")
+SubbedYDL.fail_subs = False
+
+SubbedYDL.last_sub_opts = None
 o2_row = dict(row_h)
 FAKE_RESULTS["https://www.youtube.com/watch?v=HHHHHHHHHHH"] = {
     "id": "HHHHHHHHHHH", "title": "Sade", "channel": "K4"}
 main._download_one(o2_row)
-ok(not SubbedYDL.last_opts.get("writesubtitles"), "no-subs job requests no subtitles")
+ok(SubbedYDL.last_sub_opts is None, "no-subs job skips the subtitle pass entirely")
 
 # ── download progress ───────────────────────────────────────────────────────
 hook = main._progress_hook(777)

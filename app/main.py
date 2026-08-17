@@ -411,7 +411,7 @@ def _download_one(job: dict):
     vid = job["video_id"]
     existing = find_existing(vid)
     if existing:
-        return "exists", str(existing.relative_to(VIDEO_DIR))
+        return "exists", str(existing.relative_to(VIDEO_DIR)), ""
 
     tmp = TMP_DIR / f"job-{job['id']}"
     shutil.rmtree(tmp, ignore_errors=True)
@@ -432,22 +432,36 @@ def _download_one(job: dict):
                 {"key": "EmbedThumbnail", "already_have_thumbnail": True},
             ],
         }
+        with YoutubeDL(opts) as y:
+            info = y.extract_info(watch_url(vid), download=True)
+
+        # Subtitles are fetched in a SEPARATE, best-effort pass: YouTube's
+        # caption endpoints rate-limit aggressively (429), and inside the
+        # main download a subtitle failure would sink the whole video
+        # (happened live on 2026-08-17). A failure here only leaves a note.
+        sub_note = ""
         subs = clean_sub_langs(job.get("subs") or "")
         if subs:
             # "en" should also catch "en-US"-style variants
             langs = []
             for lang in subs.split(","):
                 langs += [lang, lang + ".*"]
-            opts.update({
-                "writesubtitles": True,
-                "subtitleslangs": langs,
-                "writeautomaticsub": bool(job.get("auto_subs")),
-            })
-            opts["postprocessors"] = ([{"key": "FFmpegSubtitlesConvertor",
-                                        "format": "srt"}]
-                                      + opts["postprocessors"])
-        with YoutubeDL(opts) as y:
-            info = y.extract_info(watch_url(vid), download=True)
+            try:
+                with YoutubeDL({
+                    **_ydl_base_opts(),
+                    "skip_download": True,
+                    "outtmpl": str(tmp / "%(id)s.%(ext)s"),
+                    "writesubtitles": True,
+                    "subtitleslangs": langs,
+                    "writeautomaticsub": bool(job.get("auto_subs")),
+                    # be gentle with the caption endpoints
+                    "sleep_interval_subtitles": 3,
+                    "postprocessors": [{"key": "FFmpegSubtitlesConvertor",
+                                        "format": "srt"}],
+                }) as y:
+                    y.extract_info(watch_url(vid), download=True)
+            except Exception as e:
+                sub_note = f"altyazı inemedi: {str(e)[:150]}"
 
         files = list(tmp.glob("*.mp4"))
         if not files:
@@ -480,7 +494,7 @@ def _download_one(job: dict):
                         (title, channel, int((info or {}).get("duration") or 0),
                          job["id"]))
         notify_jellyfin(target)
-        return "done", str(target.relative_to(VIDEO_DIR))
+        return "done", str(target.relative_to(VIDEO_DIR)), sub_note
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -498,11 +512,13 @@ def worker():
             with db() as con:
                 con.execute("UPDATE jobs SET status='downloading' WHERE id=?", (r["id"],))
             try:
-                status, file = _download_one(dict(r))
+                status, file, note = _download_one(dict(r))
                 with db() as con:
+                    # a done job can still carry a note (e.g. subtitles
+                    # failed) — the UI shows it as a tooltip, not a failure
                     con.execute(
-                        "UPDATE jobs SET status=?, file=?, finished=? WHERE id=?",
-                        (status, file,
+                        "UPDATE jobs SET status=?, file=?, error=?, finished=? WHERE id=?",
+                        (status, file, note or None,
                          datetime.now().strftime("%Y-%m-%d %H:%M:%S"), r["id"]))
             except Exception as e:
                 traceback.print_exc()
@@ -510,13 +526,14 @@ def worker():
                     attempts = (con.execute(
                         "SELECT attempts FROM jobs WHERE id=?",
                         (r["id"],)).fetchone()["attempts"] or 0)
-                    if attempts < 1:
+                    if attempts < 2:
                         PROGRESS.pop(r["id"], None)  # retry restarts from 0%
                         # transient YouTube 403s usually pass on a fresh
-                        # extraction — one automatic retry, then it's manual
+                        # extraction, and on 2026-08-17 they came in pairs —
+                        # two automatic retries, then it's manual
                         con.execute("UPDATE jobs SET status='queued', attempts=? WHERE id=?",
                                     (attempts + 1, r["id"]))
-                        time.sleep(20)
+                        time.sleep(20 + attempts * 40)
                     else:
                         con.execute(
                             "UPDATE jobs SET status='error', error=?, finished=? WHERE id=?",

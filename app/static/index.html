@@ -180,6 +180,7 @@ async function refreshQueue() {
       d.jobs.map(j => {
         let [m, cls] = STATUS_TEXT[j.status] || [j.status, ""];
         if (j.status === "downloading" && j.progress != null) m = `⬇️ iniyor %${j.progress}`;
+        if (j.status === "done" && j.error) m += " ⚠";
         return `<div class="row"><div class="status ${cls}">${m}</div>
           <div class="what" title="${esc(j.error || "")}">${esc(j.title || j.video_id)} <span class="note">${esc(j.channel || "")}</span></div>
           ${j.status === "error" ? `<button class="btn" data-retry="${j.id}" title="${esc(j.error || "")} — yeniden dene">🔁</button>` : ""}

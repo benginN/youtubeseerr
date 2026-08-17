@@ -1,4 +1,4 @@
-# video-kutusu — a Jellyseerr-style downloader for YouTube videos.
+# youtubeseerr — a Jellyseerr-style downloader for YouTube videos.
 # (musicseerr's video sibling — same single-worker queue design)
 #
 # Search YouTube or paste a URL: the video is fetched with yt-dlp as an
@@ -60,7 +60,7 @@ DB_PATH = DATA_DIR / "queue.db"
 STATIC = Path(__file__).parent / "static"
 VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
-app = FastAPI(title="video-kutusu")
+app = FastAPI(title="youtubeseerr")
 
 
 # ── database ────────────────────────────────────────────────────────────────

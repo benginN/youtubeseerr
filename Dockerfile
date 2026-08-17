@@ -1,4 +1,4 @@
-# video-kutusu (musicseerr's video sibling)
+# youtubeseerr (musicseerr's video sibling)
 # NOTE: if downloads suddenly start failing, the usual suspect is an outdated
 # yt-dlp (YouTube changes often). Rebuild to pull the latest:
 #   docker compose build --no-cache && docker compose up -d

@@ -1,4 +1,4 @@
-# video-kutusu
+# youtubeseerr
 
 A tiny self-hosted YouTube downloader that feeds a Jellyfin library —
 musicseerr's video sibling.
@@ -33,10 +33,10 @@ are set, the app also nudges Jellyfin's scanner after each download.
 ## Run
 
 ```
-docker build -t video-kutusu .
+docker build -t youtubeseerr .
 docker run -p 8092:8092 \
   -v ./videos:/videos -v ./data:/data \
-  video-kutusu
+  youtubeseerr
 ```
 
 Environment: `MAX_HEIGHT` (default 1080), `PLAYLIST_LIMIT` (200),

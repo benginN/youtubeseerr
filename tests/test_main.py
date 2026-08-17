@@ -250,4 +250,31 @@ FAKE_RESULTS["https://www.youtube.com/watch?v=HHHHHHHHHHH"] = {
 main._download_one(o2_row)
 ok(not SubbedYDL.last_opts.get("writesubtitles"), "no-subs job requests no subtitles")
 
+# ── download progress ───────────────────────────────────────────────────────
+hook = main._progress_hook(777)
+hook({"status": "downloading", "downloaded_bytes": 42, "total_bytes": 100})
+ok(round(main.PROGRESS[777]) == 42, "hook computes percent from bytes")
+hook({"status": "downloading", "downloaded_bytes": 3, "total_bytes_estimate": 100})
+ok(round(main.PROGRESS[777]) == 42, "audio phase cannot drag the percent back down")
+hook({"status": "downloading", "downloaded_bytes": 100, "total_bytes": 100})
+ok(main.PROGRESS[777] == 99.0, "percent is capped at 99 until the job is done")
+hook({"status": "finished"})
+ok(main.PROGRESS[777] == 99.0, "finished events leave the percent alone")
+del main.PROGRESS[777]
+
+with main.db() as con:
+    cur = con.execute("INSERT INTO jobs (video_id, status, added) VALUES"
+                      " ('JJJJJJJJJJJ', 'downloading', '2026-08-17')")
+    dl_id = cur.lastrowid
+main.PROGRESS[dl_id] = 57.4
+q = client.get("/api/queue").json()
+row_j = next(j for j in q["jobs"] if j["id"] == dl_id)
+ok(row_j["progress"] == 57, "queue merges live progress into downloading jobs")
+ok("progress" not in next(j for j in q["jobs"] if j["video_id"] == "EEEEEEEEEEE"),
+   "non-downloading jobs carry no progress field")
+ok(client.get(f"/api/job/{dl_id}").json()["progress"] == 57, "job endpoint reports progress")
+with main.db() as con:
+    con.execute("DELETE FROM jobs WHERE id=?", (dl_id,))
+del main.PROGRESS[dl_id]
+
 print(f"OK — {PASS} assertions passed")

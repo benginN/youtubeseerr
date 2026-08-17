@@ -148,6 +148,7 @@ function watch(jobId, btn) {
       const d = await (await fetch("/api/job/" + jobId)).json();
       if (d.status === "done" || d.status === "exists") { btn.textContent = "✅"; clearInterval(timer); refreshQueue(); }
       else if (d.status === "error") { btn.textContent = "⚠️"; btn.title = d.error || "hata"; clearInterval(timer); refreshQueue(); }
+      else if (d.status === "downloading" && d.progress != null) btn.textContent = "%" + d.progress;
     } catch {}
   }, 5000);
   setTimeout(() => clearInterval(timer), 60 * 60 * 1000);
@@ -177,7 +178,8 @@ async function refreshQueue() {
     if (!d.jobs.length) { queueEl.innerHTML = '<div class="note">Henüz bir şey indirilmedi.</div>'; return; }
     queueEl.innerHTML = (d.pending > 0 ? `<div class="note busy" style="padding:0.3rem 0;">⏳ sırada ${d.pending} video var</div>` : "") +
       d.jobs.map(j => {
-        const [m, cls] = STATUS_TEXT[j.status] || [j.status, ""];
+        let [m, cls] = STATUS_TEXT[j.status] || [j.status, ""];
+        if (j.status === "downloading" && j.progress != null) m = `⬇️ iniyor %${j.progress}`;
         return `<div class="row"><div class="status ${cls}">${m}</div>
           <div class="what" title="${esc(j.error || "")}">${esc(j.title || j.video_id)} <span class="note">${esc(j.channel || "")}</span></div>
           ${j.status === "error" ? `<button class="btn" data-retry="${j.id}" title="${esc(j.error || "")} — yeniden dene">🔁</button>` : ""}
@@ -188,7 +190,7 @@ async function refreshQueue() {
       try { await fetch("/api/retry/" + b.dataset.retry, { method: "POST" }); } catch {}
       setTimeout(refreshQueue, 800);
     }));
-    if (d.pending > 0) setTimeout(refreshQueue, 5000);
+    if (d.pending > 0) setTimeout(refreshQueue, 3000);
   } catch { queueEl.innerHTML = '<div class="note err">Kuyruk okunamadı.</div>'; }
 }
 

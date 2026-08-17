@@ -347,18 +347,45 @@ def job_status(job_id: int):
         r = con.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
     if not r:
         raise HTTPException(404, "no such job")
-    return dict(r)
+    return _with_progress(dict(r))
 
 
 @app.get("/api/queue")
 def queue():
     with db() as con:
-        rows = [dict(r) for r in con.execute(
+        rows = [_with_progress(dict(r)) for r in con.execute(
             "SELECT * FROM jobs ORDER BY id DESC LIMIT 30")]
         pending = con.execute(
             "SELECT COUNT(*) c FROM jobs WHERE status IN ('queued','downloading')"
         ).fetchone()["c"]
     return {"jobs": rows, "pending": pending}
+
+
+# ── download progress ───────────────────────────────────────────────────────
+# In-memory only (single process): job_id -> percent. Queued jobs have no
+# entry; the worker clears the entry when a job reaches a terminal state.
+PROGRESS: dict[int, float] = {}
+
+
+def _progress_hook(job_id: int):
+    """yt-dlp calls this per chunk. Video and audio download as two phases,
+    so the raw per-phase percent would jump 0→100 twice; keeping the maximum
+    gives a monotonic number (the video phase is the bulk of the bytes).
+    Capped at 99 — 100% is only ever shown by the 'done' state itself."""
+    def hook(d):
+        if d.get("status") != "downloading":
+            return
+        total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+        if total:
+            pct = min(99.0, d.get("downloaded_bytes", 0) * 100.0 / total)
+            PROGRESS[job_id] = max(PROGRESS.get(job_id, 0.0), pct)
+    return hook
+
+
+def _with_progress(row: dict) -> dict:
+    if row.get("status") == "downloading":
+        row["progress"] = round(PROGRESS.get(row["id"], 0.0))
+    return row
 
 
 # ── Jellyfin nudge (best effort — realtime monitoring is the primary path) ──
@@ -396,6 +423,7 @@ def _download_one(job: dict):
             "outtmpl": str(tmp / "%(id)s.%(ext)s"),
             "merge_output_format": "mp4",
             "noplaylist": True, "retries": 5,
+            "progress_hooks": [_progress_hook(job["id"])],
             "writethumbnail": True,
             "postprocessors": [
                 # remux/tag only — no re-encode
@@ -483,6 +511,7 @@ def worker():
                         "SELECT attempts FROM jobs WHERE id=?",
                         (r["id"],)).fetchone()["attempts"] or 0)
                     if attempts < 1:
+                        PROGRESS.pop(r["id"], None)  # retry restarts from 0%
                         # transient YouTube 403s usually pass on a fresh
                         # extraction — one automatic retry, then it's manual
                         con.execute("UPDATE jobs SET status='queued', attempts=? WHERE id=?",
@@ -493,6 +522,7 @@ def worker():
                             "UPDATE jobs SET status='error', error=?, finished=? WHERE id=?",
                             (str(e)[:500],
                              datetime.now().strftime("%Y-%m-%d %H:%M:%S"), r["id"]))
+            PROGRESS.pop(r["id"], None)
             # be gentle with YouTube — a slightly random gap looks less
             # robotic than a fixed one on long bulk queues
             time.sleep(2 + random.random() * 3)

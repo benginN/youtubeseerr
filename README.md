@@ -48,7 +48,7 @@ docker run -p 8092:8092 \
 Environment: `MAX_HEIGHT` (default 1080), `PLAYLIST_LIMIT` (200),
 `COOKIES_FILE`, `POT_PROVIDER_URL`, `JELLYFIN_URL`, `JELLYFIN_TOKEN`,
 `JELLYFIN_PATH_PREFIX` (how Jellyfin sees the videos folder, for the
-scanner nudge).
+scanner nudge), `LANG_UI` (`en` default, `tr` available).
 
 Since mid-2026 YouTube demands PO tokens for real formats (`Sign in to
 confirm you're not a bot`): run a
@@ -61,3 +61,7 @@ yt-dlp: rebuild the image (`docker compose build --no-cache`).
 
 Legal: intended for personal use. Downloading from YouTube may violate
 YouTube's Terms of Service; there is no uploading/seeding involved.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

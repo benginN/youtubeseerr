@@ -52,6 +52,14 @@ def ok(cond, label):
     PASS += 1
 
 
+# ── UI language ─────────────────────────────────────────────────────────────
+page = client.get("/").text
+ok('lang="en"' in page and "__LANG__" not in page, "index served with lang=en by default")
+ok("YouTube'da ara" in page, "tr strings ship in the page regardless of lang")
+main.LANG_UI = "tr"
+ok('lang="tr"' in client.get("/").text, "LANG_UI=tr switches the served lang attribute")
+main.LANG_UI = "en"
+
 # ── helpers ─────────────────────────────────────────────────────────────────
 ok(main.clean_dir_name("AC/DC: Live") == "AC-DC- Live", "dir name slashes/colons")
 ok(main.clean_dir_name(".hidden. ") == "hidden", "dir name leading dot, trailing junk")
@@ -267,7 +275,7 @@ with main.db() as con:
     row_k = dict(con.execute("SELECT * FROM jobs WHERE id=?", (cur.lastrowid,)).fetchone())
 status4, file4, note4 = main._download_one(row_k)
 ok(status4 == "done", "subtitle failure does not sink the download")
-ok("altyazı inemedi" in note4 and "429" in note4, "subtitle failure leaves a note")
+ok("subtitles failed" in note4 and "429" in note4, "subtitle failure leaves a note")
 ok((main.VIDEO_DIR / "K4" / "İnatçı.mp4").exists(), "video still landed despite sub failure")
 SubbedYDL.fail_subs = False
 

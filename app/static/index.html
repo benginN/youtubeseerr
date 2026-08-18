@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="tr">
+<html lang="__LANG__">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -45,40 +45,91 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>📺 Youtubeseerr <small>ara ya da bağlantı yapıştır → Jellyfin'de görünür</small></h1>
+  <h1>📺 Youtubeseerr <small data-t="tagline">search or paste a link → shows up in Jellyfin</small></h1>
   <form class="search" id="searchForm">
-    <input id="searchBox" type="search" placeholder="YouTube'da ara… ya da video/oynatma listesi bağlantısı yapıştır" autofocus>
-    <button type="submit">Ara / İndir</button>
+    <input id="searchBox" type="search" data-t-placeholder="searchPh" placeholder="Search YouTube… or paste a video/playlist link" autofocus>
+    <button type="submit" data-t="searchBtn">Search / Download</button>
   </form>
   <div class="opts" id="opts">
-    <label>Kalite
+    <label><span data-t="quality">Quality</span>
       <select id="quality">
         <option value="480">480p</option>
         <option value="720">720p</option>
         <option value="1080" selected>1080p</option>
-        <option value="2160">En iyi (4K'ya kadar)</option>
+        <option value="2160" data-t="bestQ">Best (up to 4K)</option>
       </select>
     </label>
     <span class="sep"></span>
-    <span>Altyazı:</span>
+    <span data-t="subsLabel">Subtitles:</span>
     <label><input type="checkbox" class="sub" value="tr" checked> TR</label>
     <label><input type="checkbox" class="sub" value="en" checked> EN</label>
     <label><input type="checkbox" class="sub" value="de"> DE</label>
-    <label title="Elle hazırlanmış altyazı yoksa YouTube'un otomatik altyazısı da kabul edilir"><input type="checkbox" id="autoSubs" checked> otomatik de olur</label>
+    <label data-t-title="autoSubsTitle" title="If no human-made subtitles exist, YouTube's auto-generated ones are accepted"><input type="checkbox" id="autoSubs" checked> <span data-t="autoSubs">auto-generated OK</span></label>
   </div>
-  <div class="hint">Bağlantı yapıştırırsan doğrudan indirme kuyruğuna girer (oynatma listeleri de olur); yazı yazarsan YouTube'da arar. 1080p üstünde h264 genelde yok — Pi oynatırken zorlanabilir. Altyazılar videonun yanına <code>.tr.srt</code> gibi iner, Jellyfin kendiliğinden görür.</div>
-  <div id="results"><div class="note">Aramak için yukarıya yaz; sonuçlar burada çıkar.</div></div>
-  <h2>Kuyruk &amp; son indirilenler</h2>
+  <div class="hint" data-t-html="hint">Paste a link and it goes straight to the download queue (playlists work too); type text to search YouTube. h264 rarely exists above 1080p — a Pi may struggle to play it. Subtitles land next to the video as e.g. <code>.en.srt</code>; Jellyfin picks them up on its own.</div>
+  <div id="results"><div class="note" data-t="typeAbove">Type above to search; results appear here.</div></div>
+  <h2 data-t="queueTitle">Queue &amp; recent downloads</h2>
   <div class="queue" id="queue"><div class="note">—</div></div>
 </div>
 <div class="toast" id="toast"></div>
 <script>
+const LANG = document.documentElement.lang === "tr" ? "tr" : "en";
+const I18N = {
+  en: {
+    tagline: "search or paste a link → shows up in Jellyfin",
+    searchPh: "Search YouTube… or paste a video/playlist link",
+    searchBtn: "Search / Download", quality: "Quality", bestQ: "Best (up to 4K)",
+    subsLabel: "Subtitles:", autoSubs: "auto-generated OK",
+    autoSubsTitle: "If no human-made subtitles exist, YouTube's auto-generated ones are accepted",
+    hint: 'Paste a link and it goes straight to the download queue (playlists work too); type text to search YouTube. h264 rarely exists above 1080p — a Pi may struggle to play it. Subtitles land next to the video as e.g. <code>.en.srt</code>; Jellyfin picks them up on its own.',
+    typeAbove: "Type above to search; results appear here.",
+    queueTitle: "Queue & recent downloads",
+    status: { queued: "⏳ queued", downloading: "⬇️ downloading", done: "✅ done", exists: "✔ already there", error: "⚠️ error" },
+    noResults: "No results.", alreadyDl: "Already downloaded", dlTitle: "Download → Jellyfin",
+    errWord: "error", resolving: "⏳ resolving link… (playlists can take a while)",
+    cantResolve: "couldn't resolve the link", alreadyToast: "✔ Already downloaded.",
+    playlistWord: "Playlist", queuedN: n => `${n} videos queued`, skippedN: n => `, ${n} already there/queued`,
+    queuedOne: "⬇ Video queued.", alreadyOrQueued: "✔ Already downloaded or queued.",
+    queueBelow: "The queue below is running.", nothingYet: "Nothing downloaded yet.",
+    pendingN: n => `⏳ ${n} videos waiting in queue`, pct: p => `⬇️ downloading ${p}%`, btnPct: p => `${p}%`,
+    retrySuffix: " — retry", queueFail: "Couldn't read the queue.",
+    searching: "⏳ searching YouTube…", searchFail: "Search failed — couldn't reach YouTube.",
+  },
+  tr: {
+    tagline: "ara ya da bağlantı yapıştır → Jellyfin'de görünür",
+    searchPh: "YouTube'da ara… ya da video/oynatma listesi bağlantısı yapıştır",
+    searchBtn: "Ara / İndir", quality: "Kalite", bestQ: "En iyi (4K'ya kadar)",
+    subsLabel: "Altyazı:", autoSubs: "otomatik de olur",
+    autoSubsTitle: "Elle hazırlanmış altyazı yoksa YouTube'un otomatik altyazısı da kabul edilir",
+    hint: 'Bağlantı yapıştırırsan doğrudan indirme kuyruğuna girer (oynatma listeleri de olur); yazı yazarsan YouTube\'da arar. 1080p üstünde h264 genelde yok — Pi oynatırken zorlanabilir. Altyazılar videonun yanına <code>.tr.srt</code> gibi iner, Jellyfin kendiliğinden görür.',
+    typeAbove: "Aramak için yukarıya yaz; sonuçlar burada çıkar.",
+    queueTitle: "Kuyruk & son indirilenler",
+    status: { queued: "⏳ sırada", downloading: "⬇️ iniyor", done: "✅ indi", exists: "✔ zaten var", error: "⚠️ hata" },
+    noResults: "Sonuç yok.", alreadyDl: "Zaten indirilmiş", dlTitle: "İndir → Jellyfin",
+    errWord: "hata", resolving: "⏳ bağlantı çözülüyor… (oynatma listelerinde biraz sürebilir)",
+    cantResolve: "bağlantı çözülemedi", alreadyToast: "✔ Bu video zaten indirilmiş.",
+    playlistWord: "Liste", queuedN: n => `${n} video kuyruğa girdi`, skippedN: n => `, ${n} zaten vardı/sıradaydı`,
+    queuedOne: "⬇ Video kuyruğa girdi.", alreadyOrQueued: "✔ Zaten indirilmiş ya da sırada.",
+    queueBelow: "Kuyruk aşağıda ilerliyor.", nothingYet: "Henüz bir şey indirilmedi.",
+    pendingN: n => `⏳ sırada ${n} video var`, pct: p => `⬇️ iniyor %${p}`, btnPct: p => `%${p}`,
+    retrySuffix: " — yeniden dene", queueFail: "Kuyruk okunamadı.",
+    searching: "⏳ YouTube'da aranıyor…", searchFail: "Arama başarısız — YouTube'a ulaşılamadı.",
+  },
+};
+const T = I18N[LANG];
+if (LANG !== "en") {
+  document.querySelectorAll("[data-t]").forEach(el => { const v = T[el.dataset.t]; if (v) el.textContent = v; });
+  document.querySelectorAll("[data-t-html]").forEach(el => { const v = T[el.dataset.tHtml]; if (v) el.innerHTML = v; });
+  document.querySelectorAll("[data-t-placeholder]").forEach(el => { const v = T[el.dataset.tPlaceholder]; if (v) el.placeholder = v; });
+  document.querySelectorAll("[data-t-title]").forEach(el => { const v = T[el.dataset.tTitle]; if (v) el.title = v; });
+}
+
 const resultsEl = document.getElementById("results");
 const queueEl = document.getElementById("queue");
 const toastEl = document.getElementById("toast");
 const STATUS_TEXT = {
-  "queued": ["⏳ sırada", "busy"], "downloading": ["⬇️ iniyor", "busy"],
-  "done": ["✅ indi", "ok"], "exists": ["✔ zaten var", "ok"], "error": ["⚠️ hata", "err"],
+  "queued": [T.status.queued, "busy"], "downloading": [T.status.downloading, "busy"],
+  "done": [T.status.done, "ok"], "exists": [T.status.exists, "ok"], "error": [T.status.error, "err"],
 };
 
 function esc(s) { const d = document.createElement("div"); d.textContent = s || ""; return d.innerHTML; }
@@ -112,14 +163,14 @@ function dlOpts() {
 loadOpts();
 
 function drawVideos(el, results) {
-  if (!results.length) { el.innerHTML = '<div class="note">Sonuç yok.</div>'; return; }
+  if (!results.length) { el.innerHTML = `<div class="note">${T.noResults}</div>`; return; }
   el.innerHTML = '<div class="grid">' + results.map(v => `
     <div class="card">
       <div class="thumbwrap">
         <img src="/api/thumb?v=${v.video_id}" alt="" loading="lazy">
         ${v.duration ? `<div class="dur">${fmtDur(v.duration)}</div>` : ""}
-        ${v.exists ? '<button class="get" disabled title="Zaten indirilmiş">✔</button>'
-                   : `<button class="get" data-id="${v.video_id}" title="İndir → Jellyfin">⬇</button>`}
+        ${v.exists ? `<button class="get" disabled title="${T.alreadyDl}">✔</button>`
+                   : `<button class="get" data-id="${v.video_id}" title="${T.dlTitle}">⬇</button>`}
       </div>
       <div class="info">
         <div class="name" title="${esc(v.title)}">${esc(v.title)}</div>
@@ -147,43 +198,43 @@ function watch(jobId, btn) {
     try {
       const d = await (await fetch("/api/job/" + jobId)).json();
       if (d.status === "done" || d.status === "exists") { btn.textContent = "✅"; clearInterval(timer); refreshQueue(); }
-      else if (d.status === "error") { btn.textContent = "⚠️"; btn.title = d.error || "hata"; clearInterval(timer); refreshQueue(); }
-      else if (d.status === "downloading" && d.progress != null) btn.textContent = "%" + d.progress;
+      else if (d.status === "error") { btn.textContent = "⚠️"; btn.title = d.error || T.errWord; clearInterval(timer); refreshQueue(); }
+      else if (d.status === "downloading" && d.progress != null) btn.textContent = T.btnPct(d.progress);
     } catch {}
   }, 5000);
   setTimeout(() => clearInterval(timer), 60 * 60 * 1000);
 }
 
 async function downloadUrl(url) {
-  resultsEl.innerHTML = '<div class="note">⏳ bağlantı çözülüyor… (oynatma listelerinde biraz sürebilir)</div>';
+  resultsEl.innerHTML = `<div class="note">${T.resolving}</div>`;
   try {
     const r = await fetch("/api/download", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url, ...dlOpts() }) });
-    if (!r.ok) throw new Error((await r.json()).detail || "bağlantı çözülemedi");
+    if (!r.ok) throw new Error((await r.json()).detail || T.cantResolve);
     const d = await r.json();
-    if (d.status === "exists") { toast("✔ Bu video zaten indirilmiş."); resultsEl.innerHTML = ""; }
+    if (d.status === "exists") { toast(T.alreadyToast); resultsEl.innerHTML = ""; }
     else if (d.kind === "playlist")
-      toast(`📃 ${d.playlist || "Liste"}: ${d.added} video kuyruğa girdi` + (d.skipped ? `, ${d.skipped} zaten vardı/sıradaydı` : ""));
+      toast(`📃 ${d.playlist || T.playlistWord}: ${T.queuedN(d.added)}` + (d.skipped ? T.skippedN(d.skipped) : ""));
     else if (d.added !== undefined)
-      toast(d.added ? "⬇ Video kuyruğa girdi." : "✔ Zaten indirilmiş ya da sırada.");
-    else toast("⬇ Video kuyruğa girdi.");
-    resultsEl.innerHTML = '<div class="note">Kuyruk aşağıda ilerliyor.</div>';
-  } catch (err) { resultsEl.innerHTML = '<div class="note err">⚠️ ' + esc(err.message || "bağlantı çözülemedi") + "</div>"; }
+      toast(d.added ? T.queuedOne : T.alreadyOrQueued);
+    else toast(T.queuedOne);
+    resultsEl.innerHTML = `<div class="note">${T.queueBelow}</div>`;
+  } catch (err) { resultsEl.innerHTML = '<div class="note err">⚠️ ' + esc(err.message || T.cantResolve) + "</div>"; }
   refreshQueue();
 }
 
 async function refreshQueue() {
   try {
     const d = await (await fetch("/api/queue")).json();
-    if (!d.jobs.length) { queueEl.innerHTML = '<div class="note">Henüz bir şey indirilmedi.</div>'; return; }
-    queueEl.innerHTML = (d.pending > 0 ? `<div class="note busy" style="padding:0.3rem 0;">⏳ sırada ${d.pending} video var</div>` : "") +
+    if (!d.jobs.length) { queueEl.innerHTML = `<div class="note">${T.nothingYet}</div>`; return; }
+    queueEl.innerHTML = (d.pending > 0 ? `<div class="note busy" style="padding:0.3rem 0;">${T.pendingN(d.pending)}</div>` : "") +
       d.jobs.map(j => {
         let [m, cls] = STATUS_TEXT[j.status] || [j.status, ""];
-        if (j.status === "downloading" && j.progress != null) m = `⬇️ iniyor %${j.progress}`;
+        if (j.status === "downloading" && j.progress != null) m = T.pct(j.progress);
         if (j.status === "done" && j.error) m += " ⚠";
         return `<div class="row"><div class="status ${cls}">${m}</div>
           <div class="what" title="${esc(j.error || "")}">${esc(j.title || j.video_id)} <span class="note">${esc(j.channel || "")}</span></div>
-          ${j.status === "error" ? `<button class="btn" data-retry="${j.id}" title="${esc(j.error || "")} — yeniden dene">🔁</button>` : ""}
+          ${j.status === "error" ? `<button class="btn" data-retry="${j.id}" title="${esc(j.error || "")}${T.retrySuffix}">🔁</button>` : ""}
           <div class="when">${esc((j.finished || j.added || "").slice(5, 16))}</div></div>`;
       }).join("");
     queueEl.querySelectorAll("button[data-retry]").forEach(b => b.addEventListener("click", async () => {
@@ -192,7 +243,7 @@ async function refreshQueue() {
       setTimeout(refreshQueue, 800);
     }));
     if (d.pending > 0) setTimeout(refreshQueue, 3000);
-  } catch { queueEl.innerHTML = '<div class="note err">Kuyruk okunamadı.</div>'; }
+  } catch { queueEl.innerHTML = `<div class="note err">${T.queueFail}</div>`; }
 }
 
 document.getElementById("searchForm").addEventListener("submit", async e => {
@@ -200,10 +251,10 @@ document.getElementById("searchForm").addEventListener("submit", async e => {
   const q = document.getElementById("searchBox").value.trim();
   if (!q) return;
   if (/^https?:\/\//i.test(q)) { downloadUrl(q); return; }
-  resultsEl.innerHTML = '<div class="note">⏳ YouTube\'da aranıyor…</div>';
+  resultsEl.innerHTML = `<div class="note">${T.searching}</div>`;
   try {
     drawVideos(resultsEl, (await (await fetch("/api/search?q=" + encodeURIComponent(q))).json()).results);
-  } catch { resultsEl.innerHTML = '<div class="note err">Arama başarısız — YouTube\'a ulaşılamadı.</div>'; }
+  } catch { resultsEl.innerHTML = `<div class="note err">${T.searchFail}</div>`; }
 });
 
 refreshQueue();

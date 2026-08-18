@@ -45,6 +45,7 @@ VIDEO_DIR = Path(os.environ.get("VIDEO_DIR", "/videos"))
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 MAX_HEIGHT = int(os.environ.get("MAX_HEIGHT", "1080"))
 PLAYLIST_LIMIT = int(os.environ.get("PLAYLIST_LIMIT", "200"))
+LANG_UI = os.environ.get("LANG_UI", "en")  # "en" or "tr"
 COOKIES_FILE = os.environ.get("COOKIES_FILE", "")  # optional, for bot checks
 # optional: a bgutil-ytdlp-pot-provider instance. As of mid-2026 YouTube
 # demands PO tokens for real video formats ("Sign in to confirm you're not
@@ -215,7 +216,9 @@ def resolve_url(url: str) -> dict:
 # ── API: pages, health, search ──────────────────────────────────────────────
 @app.get("/")
 def index():
-    return FileResponse(STATIC / "index.html")
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    lang = "tr" if LANG_UI == "tr" else "en"
+    return Response(html.replace("__LANG__", lang, 1), media_type="text/html")
 
 
 @app.get("/api/health")
@@ -461,7 +464,7 @@ def _download_one(job: dict):
                 }) as y:
                     y.extract_info(watch_url(vid), download=True)
             except Exception as e:
-                sub_note = f"altyazı inemedi: {str(e)[:150]}"
+                sub_note = f"subtitles failed: {str(e)[:150]}"
 
         files = list(tmp.glob("*.mp4"))
         if not files:

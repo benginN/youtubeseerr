@@ -402,7 +402,8 @@ def notify_jellyfin(target: Path):
         requests.post(
             f"{JELLYFIN_URL}/Library/Media/Updated",
             json={"Updates": [{"Path": path, "UpdateType": "Created"}]},
-            headers={"X-Emby-Token": JELLYFIN_TOKEN}, timeout=10)
+            # Jellyfin 12+: legacy X-Emby-Token header is deprecated (removed in 13)
+            headers={"Authorization": f"MediaBrowser Token=\"{JELLYFIN_TOKEN}\""}, timeout=10)
     except requests.RequestException:
         pass  # the library's realtime monitor will catch it anyway
 
